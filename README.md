@@ -1,0 +1,2 @@
+# akshare_dm4vnpy
+基于akshare同步A股历史数据到本地数据库
