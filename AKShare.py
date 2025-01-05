@@ -130,7 +130,7 @@ class AKShareClient:
             while True:
                 try:
                     # akshare_df = self.pro.query('daily', ts_code=tscode, start_date=start, end_date=simulate_end)
-                    akshare_df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=simulate_end, adjust="")
+                    akshare_df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=simulate_end, adjust="hfq")
                 except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
                     log.error(e)
                     # traceback.print_exc()
