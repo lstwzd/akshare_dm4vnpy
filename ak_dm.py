@@ -113,11 +113,11 @@ class AShareDailyDataManager:
                                                                 exchange=exchange,
                                                                 interval=Interval.DAILY)
                     if newest_local_bar is not None:
-                        pbar.set_description_str("正在处理股票代码：" + tscode + "本地最新数据：" +
+                        pbar.set_description_str("正在处理股票代码：" + tscode + " 本地最新数据：" +
                                                  newest_local_bar.datetime.strftime(TS_DATE_FORMATE))
                         start_date = newest_local_bar.datetime + timedelta(days=1)
                     else:
-                        pbar.set_description_str("正在处理股票代码：" + tscode + "无本地数据")
+                        pbar.set_description_str("正在处理股票代码：" + tscode + " 无本地数据")
 
                         # 查询上市时间
                         list_date = self.akshare_client.stock_individual_info(symbol)
@@ -128,7 +128,7 @@ class AShareDailyDataManager:
                             continue
                         else:
                             start_date = datetime.strptime(list_date, TS_DATE_FORMATE)
-                    
+    
                     if start_date.date() < datetime.now().date():
                         req = HistoryRequest(symbol=symbol,
                                             exchange=exchange,
