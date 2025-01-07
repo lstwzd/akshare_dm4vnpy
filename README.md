@@ -13,23 +13,22 @@
 #### 使用说明
 
 1. 配置好vnpy本地数据库
-   在vnpy交易软件，配置->全局配置，例如mongodb数据库
+   * 在vnpy交易软件，配置->全局配置，例如mongodb数据库
    ```
    database.name  mongodb
    ...
    ```
+   * 在mongodb中新建 vnpy_tushare 数据库
 
-2.  下载所有A股股票全市场日线数据
-```
-python ak_dm.py -a 
-```
 
-3.  自动更新A股股票全市场日线数据
+2.  下载所有A股股票全市场日线数据(linux/macos)
 ```
-python ak_dm.py -u
+chmod +x ./akd.sh
+./akd.sh
 ```
+更新完成后自动退出
 
-4.  逐日检测并自动更新A股股票全市场日线数据(注意！速度极慢)
+3.  逐日检测并自动更新A股股票全市场日线数据(注意！速度极慢)
 ```
 python ak_dm.py -c
 ```
