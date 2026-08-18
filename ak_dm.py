@@ -26,6 +26,9 @@ sys.path.append(os.getcwd())
 
 from AKShare import akshare_client, TS_DATE_FORMATE, to_vnpy_codes
 
+# 东方财富接口被封禁时无法查询个股上市时间，下载起始日期退化为固定早日期
+FALLBACK_START_DATE: str = '19900101'
+
 
 class AShareDailyDataManager:
 
@@ -39,7 +42,11 @@ class AShareDailyDataManager:
 
     def init(self):
         """"""
-        self.akshare_client.init()
+        if not self.akshare_client.init():
+            raise RuntimeError(
+                "AKShare数据源初始化失败(股票列表获取失败)，请检查网络或东方财富接口是否被封禁，"
+                "详见日志 log.txt，脚本终止"
+            )
         self.symbols = self.akshare_client.symbols
         self.trade_cal = self.akshare_client.trade_cal
         self.bar_overviews = database_manager.get_bar_overview()
@@ -55,7 +62,8 @@ class AShareDailyDataManager:
             with tqdm(total=len(self.symbols)) as pbar:
                 for tscode in self.symbols['symbol']:
                     symbol, exchange = to_vnpy_codes(tscode)
-                    list_date = self.akshare_client.stock_individual_info(symbol)
+                    # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
+                    list_date = FALLBACK_START_DATE
 
                     pbar.set_description_str("下载A股日线数据股票代码:" + tscode)
                     start_date = datetime.strptime(list_date, TS_DATE_FORMATE)
@@ -119,15 +127,8 @@ class AShareDailyDataManager:
                     else:
                         pbar.set_description_str("正在处理股票代码：" + tscode + " 无本地数据")
 
-                        # 查询上市时间
-                        list_date = self.akshare_client.stock_individual_info(symbol)
-                        if list_date == '-': 
-                            # 未上市股票
-                            pbar.set_description_str("正在处理未上市股票代码：" + tscode)
-                            pbar.update(1)
-                            continue
-                        else:
-                            start_date = datetime.strptime(list_date, TS_DATE_FORMATE)
+                        # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
+                        start_date = datetime.strptime(FALLBACK_START_DATE, TS_DATE_FORMATE)
     
                     if start_date.date() < datetime.now().date():
                         req = HistoryRequest(symbol=symbol,
@@ -167,10 +168,10 @@ class AShareDailyDataManager:
                 for symbol in self.symbols['symbol']:
                     pbar.set_description_str("正在检查A股日线数据，股票代码:" + symbol)
 
-                    # 查询上市时间
-                    list_date = self.akshare_client.stock_individual_info(symbol)
-
                     symbol, exchange = to_vnpy_codes(symbol)
+
+                    # 不查上市时间(东财接口被封时不可用)，以交易日历起始日为检查起点
+                    list_date = self.trade_cal[exchange.value]['trade_date'].min().strftime(TS_DATE_FORMATE)
 
                     local_bar = database_manager.load_bar_data(symbol=symbol,
                                                                exchange=exchange,
