@@ -1,0 +1,6 @@
+# 运行日志
+*.log
+log.txt
+
+# Python 缓存
+__pycache__/
