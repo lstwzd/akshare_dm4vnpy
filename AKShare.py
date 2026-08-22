@@ -109,33 +109,33 @@ class AKShareClient:
 
     def _fetch_kline_em(self, symbol: str, start: str, end: str) -> Optional[pd.DataFrame]:
         """
-        东方财富日K线(前复权)，成交量单位为手，此处统一归一化为股
+        东方财富日K线(不复权，与实时行情一致)，成交量单位为手，此处统一归一化为股
         :param symbol: 不带交易所前缀的6位股票代码
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="hfq")
+        df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="")
         df['成交量'] = df['成交量'] * 100
         return df.rename(columns={'日期': 'trade_date', '开盘': 'open', '最高': 'high',
                                   '最低': 'low', '收盘': 'close', '成交量': 'volumn', '成交额': 'turnover'})
 
     def _fetch_kline_sina(self, symbol: str, start: str, end: str) -> Optional[pd.DataFrame]:
         """
-        新浪日K线(前复权)，成交量单位为股，无需转换
+        新浪日K线(不复权，与实时行情一致)，成交量单位为股，无需转换
         :param symbol: 带交易所前缀的代码(如sz000001)
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_daily(symbol=symbol, start_date=start, end_date=end, adjust="hfq")
+        df = self.pro.stock_zh_a_daily(symbol=symbol, start_date=start, end_date=end, adjust="")
         # 新浪返回同时含amount(成交额)与turnover(换手率)，必须先选列再重命名，否则产生重复列名
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']]
         return df.rename(columns={'date': 'trade_date', 'volume': 'volumn', 'amount': 'turnover'})
 
     def _fetch_kline_tx(self, symbol: str, start: str, end: str) -> Optional[pd.DataFrame]:
         """
-        腾讯日K线(前复权)，akshare已统一为股，仅sz000前缀仍返回手需补转
+        腾讯日K线(不复权，与实时行情一致)，akshare已统一为股，仅sz000前缀仍返回手需补转
         :param symbol: 带交易所前缀的代码(如sz000001)
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end, adjust="hfq")
+        df = self.pro.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end, adjust="")
         if symbol.startswith("sz000"):
             df['volume'] = df['volume'] * 100
         # 腾讯返回同时含volume(成交量)与turnover(换手率)，必须先选列再重命名，否则产生重复列名
