@@ -19,6 +19,10 @@ MAX_QUERY_SIZE: int = 5000
 TS_DATE_FORMATE: str = '%Y%m%d'
 MAX_QUERY_TIMES: int = 500
 
+# 全部数据源统一使用不复权口径(与实时行情一致)，保证跨源可比对；
+# 回测/指标所需复权价由下游单独构建复权管线，清洗层不做复权。
+ADJUST_BASIS: str = ""
+
 EXCHANGE_TS2VT: Dict[str, Exchange] = {
     'sh': Exchange.SSE,
     'SH': Exchange.SSE,
@@ -113,7 +117,7 @@ class AKShareClient:
         :param symbol: 不带交易所前缀的6位股票代码
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="")
+        df = self.pro.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust=ADJUST_BASIS)
         df['成交量'] = df['成交量'] * 100
         return df.rename(columns={'日期': 'trade_date', '开盘': 'open', '最高': 'high',
                                   '最低': 'low', '收盘': 'close', '成交量': 'volumn', '成交额': 'turnover'})
@@ -124,7 +128,7 @@ class AKShareClient:
         :param symbol: 带交易所前缀的代码(如sz000001)
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_daily(symbol=symbol, start_date=start, end_date=end, adjust="")
+        df = self.pro.stock_zh_a_daily(symbol=symbol, start_date=start, end_date=end, adjust=ADJUST_BASIS)
         # 新浪返回同时含amount(成交额)与turnover(换手率)，必须先选列再重命名，否则产生重复列名
         df = df[['date', 'open', 'high', 'low', 'close', 'volume', 'amount']]
         return df.rename(columns={'date': 'trade_date', 'volume': 'volumn', 'amount': 'turnover'})
@@ -135,7 +139,7 @@ class AKShareClient:
         :param symbol: 带交易所前缀的代码(如sz000001)
         :return: 标准化df(含trade_date/open/high/low/close/volumn/turnover)，失败抛出异常
         """
-        df = self.pro.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end, adjust="")
+        df = self.pro.stock_zh_a_hist_tx(symbol=symbol, start_date=start, end_date=end, adjust=ADJUST_BASIS)
         if symbol.startswith("sz000"):
             df['volume'] = df['volume'] * 100
         # 腾讯返回同时含volume(成交量)与turnover(换手率)，必须先选列再重命名，否则产生重复列名
@@ -246,18 +250,15 @@ class AKShareClient:
                 date = datetime.strptime(str(row.trade_date), '%Y-%m-%d')
                 date = CHINA_TZ.localize(date)
 
-                if pd.isnull(row['open']):
-                    log.info(symbol + '.' + EXCHANGE_VT2TS[exchange] + row['trade_date'] + "open_price为None")
-                elif pd.isnull(row['high']):
-                    log.info(symbol + '.' + EXCHANGE_VT2TS[exchange] + row['trade_date'] + "high_price为None")
-                elif pd.isnull(row['low']):
-                    log.info(symbol + '.' + EXCHANGE_VT2TS[exchange] + row['trade_date'] + "low_price为None")
-                elif pd.isnull(row['close']):
-                    log.info(symbol + '.' + EXCHANGE_VT2TS[exchange] + row['trade_date'] + "close_price为None")
-                elif pd.isnull(row['volumn']):
-                    log.info(symbol + '.' + EXCHANGE_VT2TS[exchange] + row['trade_date'] + "volume为None")
+                # 缺失 OHLC/成交量即脏数据：整根跳过，避免 fillna(0) 产生 0 价假K线
+                missing_fields = [f for f in ("open", "high", "low", "close", "volumn")
+                                  if pd.isnull(row[f])]
+                if missing_fields:
+                    log.war(symbol + '.' + EXCHANGE_VT2TS[exchange] + str(row.trade_date) +
+                            " 缺失字段 " + ",".join(missing_fields) + "，跳过该根K线")
+                    continue
 
-                row.fillna(0)
+                turnover = row['turnover'] if not pd.isnull(row['turnover']) else 0.0
                 bar = BarData(
                     symbol=symbol,
                     exchange=exchange,
