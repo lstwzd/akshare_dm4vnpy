@@ -1,5 +1,25 @@
 #!/bin/bash
 
+SOURCE="akshare"
+PY_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --source)
+            SOURCE="$2"
+            shift 2
+            ;;
+        --source=*)
+            SOURCE="${1#*=}"
+            shift
+            ;;
+        *)
+            PY_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
 # 定义检查间隔时间（秒）
 CHECK_INTERVAL=10
 
@@ -44,7 +64,7 @@ echo "首次执行，清理日志和进程..."
 rm -f "$LOG_FILE" | killall -9 python ak_dm.py
 
 # 启动 python 脚本并将输出重定向到临时文件、标准输出和日志文件
-python ak_dm.py > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
+python ak_dm.py --source "$SOURCE" "${PY_ARGS[@]}" > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
 # 获取进程ID
 PID=$!
 
@@ -77,11 +97,11 @@ while true; do
             second_last_stock_code=$(get_second_last_stock_code "$LOG_FILE")
             if [ -n "$second_last_stock_code" ]; then
                 echo "重新启动脚本，使用股票代码: $second_last_stock_code" | tee -a "$LOG_FILE"                
-                python ak_dm.py -s "$second_last_stock_code" > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
+                python ak_dm.py --source "$SOURCE" -s "$second_last_stock_code" "${PY_ARGS[@]}" > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
                 PID=$!
             else
                 echo "未找到上次股票代码，重新启动脚本..." | tee -a "$LOG_FILE"
-                python ak_dm.py > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
+                python ak_dm.py --source "$SOURCE" "${PY_ARGS[@]}" > >(tee "$OUTPUT_FILE" | tee -a "$LOG_FILE") 2>&1 &
                 PID=$!
             fi
         fi

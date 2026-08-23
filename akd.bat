@@ -1,6 +1,29 @@
 @echo off
 setlocal enabledelayedexpansion
 
+set SOURCE=akshare
+set PY_ARGS=
+
+:PARSE_ARGS
+if "%~1"=="" goto AFTER_PARSE
+if /I "%~1"=="--source" (
+    set "SOURCE=%~2"
+    shift
+    shift
+    goto PARSE_ARGS
+)
+if "%~1"=="--source=*" (
+    set "SOURCE=%~1"
+    set "SOURCE=!SOURCE:~9!"
+    shift
+    goto PARSE_ARGS
+)
+set "PY_ARGS=!PY_ARGS! %~1"
+shift
+goto PARSE_ARGS
+
+:AFTER_PARSE
+
 :: 定义检查间隔时间（秒）
 set CHECK_INTERVAL=10
 
@@ -52,7 +75,7 @@ del "%LOG_FILE%" 2>nul
 taskkill /IM python.exe /F 2>nul
 
 :: 启动 python 脚本并将输出重定向到临时文件、标准输出和日志文件
-start /B python ak_dm.py > "%OUTPUT_FILE%" 2>&1
+start /B python ak_dm.py --source %SOURCE% %PY_ARGS% > "%OUTPUT_FILE%" 2>&1
 set PID=%errorlevel%
 
 :: 初始化无输出计数器
@@ -93,11 +116,11 @@ if exist "%OUTPUT_FILE%" (
         call :GET_SECOND_LAST_STOCK_CODE "%LOG_FILE%"
         if defined second_last_stock_code (
             echo 重新启动脚本，使用股票代码: %second_last_stock_code% >> "%LOG_FILE%"                
-            start /B python ak_dm.py -s %second_last_stock_code% > "%OUTPUT_FILE%" 2>&1
+            start /B python ak_dm.py --source %SOURCE% -s %second_last_stock_code% %PY_ARGS% > "%OUTPUT_FILE%" 2>&1
             set PID=%errorlevel%
         ) else (
             echo 未找到上次股票代码，重新启动脚本... >> "%LOG_FILE%"
-            start /B python ak_dm.py > "%OUTPUT_FILE%" 2>&1
+            start /B python ak_dm.py --source %SOURCE% %PY_ARGS% > "%OUTPUT_FILE%" 2>&1
             set PID=%errorlevel%
         )
     )
