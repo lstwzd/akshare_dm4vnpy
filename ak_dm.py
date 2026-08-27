@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, time
 from time import sleep
 from typing import List, Optional, Tuple
@@ -166,43 +167,53 @@ class AShareDailyDataManager:
             log.war(f"多数决议失败({req.symbol}.{req.exchange})：{ex!r}")
             return bars, None
 
-    def download_all(self):
+    def download_all(self, workers: int = 8):
         """
-        使用tushare下载A股股票全市场日线数据
+        使用tushare下载A股股票全市场日线数据(多线程并发)
         :return:
         """
         log.info("开始下载A股股票全市场日线数据")
         # stared = False
         if self.symbols is not None:
-            with tqdm(total=len(self.symbols)) as pbar:
-                for tscode in self.symbols['symbol']:
-                    symbol, exchange = to_vnpy_codes(tscode)
-                    # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
-                    list_date = FALLBACK_START_DATE
+            symbols = list(self.symbols['symbol'])
 
-                    pbar.set_description_str("下载A股日线数据股票代码:" + tscode)
-                    start_date = datetime.strptime(list_date, TS_DATE_FORMATE)
-                    req = HistoryRequest(symbol=symbol,
-                                         exchange=exchange,
-                                         start=start_date,
-                                         end=datetime.now(),
-                                         interval=Interval.DAILY)
-                    bardata, consensus_result = self._query_with_consensus(req=req)
+            def worker(tscode: str) -> None:
+                symbol, exchange = to_vnpy_codes(tscode)
+                # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
+                list_date = FALLBACK_START_DATE
 
-                    if consensus_result is not None and consensus_result.has_conflict:
-                        log.war(tscode + " 多源决议存在冲突，明细如下：\n" +
-                                format_consensus(consensus_result, self.source_name, self.verify_sources))
+                start_date = datetime.strptime(list_date, TS_DATE_FORMATE)
+                req = HistoryRequest(symbol=symbol,
+                                     exchange=exchange,
+                                     start=start_date,
+                                     end=datetime.now(),
+                                     interval=Interval.DAILY)
+                bardata, consensus_result = self._query_with_consensus(req=req)
 
-                    if bardata:
+                if consensus_result is not None and consensus_result.has_conflict:
+                    log.war(tscode + " 多源决议存在冲突，明细如下：\n" +
+                            format_consensus(consensus_result, self.source_name, self.verify_sources))
+
+                if bardata:
+                    try:
+                        database_manager.save_bar_data(bardata)
+                    except Exception as ex:
+                        log.error(tscode + "数据存入数据库异常")
+                        log.error(ex)
+                        traceback.print_exc()
+
+            with tqdm(total=len(symbols)) as pbar:
+                with ThreadPoolExecutor(max_workers=max(1, int(workers))) as executor:
+                    futures = {executor.submit(worker, tscode): tscode for tscode in symbols}
+                    for fut in as_completed(futures):
                         try:
-                            database_manager.save_bar_data(bardata)
+                            fut.result()
                         except Exception as ex:
-                            log.error(tscode + "数据存入数据库异常")
+                            log.error(futures[fut] + " 下载异常")
                             log.error(ex)
                             traceback.print_exc()
-
-                    pbar.update(1)
-                    log.info(pbar.desc)
+                        pbar.set_description_str("下载A股日线数据股票代码:" + futures[fut])
+                        pbar.update(1)
 
         log.info("A股股票全市场日线数据下载完毕")
 
@@ -215,60 +226,69 @@ class AShareDailyDataManager:
                 return bars[0] if bars is not None else None
         return None
 
-    def update_newest(self, ss_symbol=''):
+    def update_newest(self, ss_symbol: str = '', workers: int = 8):
         """
         使用tushare更新本地数据库中的最新数据，默认本地数据库中原最新的数据之前的数据都是完备的
+        (多线程并发)
         :return:
         """
-        stared = False
         log.info("开始更新最新的A股股票全市场日线数据")
         if self.symbols is not None:
-            with tqdm(total=len(self.symbols)) as pbar:
-                for tscode in self.symbols['symbol']:
-                   
-                    symbol, exchange = to_vnpy_codes(tscode)
+            symbols = list(self.symbols['symbol'])
 
-                    if ss_symbol:
-                        if (not stared and ss_symbol != symbol):
-                            log.info(symbol + ' ingore.')
-                            pbar.update(1)
-                            continue
-                        else:
-                            stared = True
-                    
-                    newest_local_bar = self.get_newest_bar_data(symbol=symbol,
-                                                                exchange=exchange,
-                                                                interval=Interval.DAILY)
-                    if newest_local_bar is not None:
-                        pbar.set_description_str("正在处理股票代码：" + tscode + " 本地最新数据：" +
-                                                 newest_local_bar.datetime.strftime(TS_DATE_FORMATE))
-                        start_date = newest_local_bar.datetime + timedelta(days=1)
-                    else:
-                        pbar.set_description_str("正在处理股票代码：" + tscode + " 无本地数据")
+            # 与串行版本一致：指定 ss_symbol 时从该代码(含)开始处理
+            if ss_symbol:
+                start_idx = None
+                for i, tscode in enumerate(symbols):
+                    symbol, _ = to_vnpy_codes(tscode)
+                    if symbol == ss_symbol:
+                        start_idx = i
+                        break
+                if start_idx is not None:
+                    symbols = symbols[start_idx:]
 
-                        # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
-                        start_date = datetime.strptime(FALLBACK_START_DATE, TS_DATE_FORMATE)
-    
-                    if start_date.date() < datetime.now().date():
-                        req = HistoryRequest(symbol=symbol,
-                                            exchange=exchange,
-                                            start=start_date,
-                                            end=datetime.now(),
-                                            interval=Interval.DAILY)
-                        bardata, consensus_result = self._query_with_consensus(req=req)
-                        if consensus_result is not None and consensus_result.has_conflict:
-                            log.war(tscode + " 多源决议存在冲突，明细如下：\n" +
-                                    format_consensus(consensus_result, self.source_name, self.verify_sources))
-                        if bardata:
-                            try:
-                                database_manager.save_bar_data(bardata)
-                            except Exception as ex:
-                                log.error(tscode + "数据存入数据库异常")
-                                log.error(ex)
-                                traceback.print_exc()
+            def worker(tscode: str) -> None:
+                symbol, exchange = to_vnpy_codes(tscode)
 
-                    pbar.update(1)
-                    log.info(pbar.desc)
+                newest_local_bar = self.get_newest_bar_data(symbol=symbol,
+                                                            exchange=exchange,
+                                                            interval=Interval.DAILY)
+                if newest_local_bar is not None:
+                    start_date = newest_local_bar.datetime + timedelta(days=1)
+                else:
+                    # 不查上市时间(东财接口被封时不可用)，固定早日期，上市前数据源自然返回空
+                    start_date = datetime.strptime(FALLBACK_START_DATE, TS_DATE_FORMATE)
+
+                if start_date.date() < datetime.now().date():
+                    req = HistoryRequest(symbol=symbol,
+                                         exchange=exchange,
+                                         start=start_date,
+                                         end=datetime.now(),
+                                         interval=Interval.DAILY)
+                    bardata, consensus_result = self._query_with_consensus(req=req)
+                    if consensus_result is not None and consensus_result.has_conflict:
+                        log.war(tscode + " 多源决议存在冲突，明细如下：\n" +
+                                format_consensus(consensus_result, self.source_name, self.verify_sources))
+                    if bardata:
+                        try:
+                            database_manager.save_bar_data(bardata)
+                        except Exception as ex:
+                            log.error(tscode + "数据存入数据库异常")
+                            log.error(ex)
+                            traceback.print_exc()
+
+            with tqdm(total=len(symbols)) as pbar:
+                with ThreadPoolExecutor(max_workers=max(1, int(workers))) as executor:
+                    futures = {executor.submit(worker, tscode): tscode for tscode in symbols}
+                    for fut in as_completed(futures):
+                        try:
+                            fut.result()
+                        except Exception as ex:
+                            log.error(futures[fut] + " 更新异常")
+                            log.error(ex)
+                            traceback.print_exc()
+                        pbar.set_description_str("正在处理股票代码：" + futures[fut])
+                        pbar.update(1)
 
         log.info("A股股票全市场日线数据更新完毕")
 
@@ -368,12 +388,37 @@ class AShareDailyDataManager:
             log.war(f"聚合无 overview 股票失败，仅清洗有 overview 的股票：{ex!r}")
             return overviews
 
-    def clean(self, ss_symbol: str = "", force: bool = False):
+    # 断点续跑：保存"已确认清洗完成的连续前缀"的最后一个 symbol，按 (symbol, exchange) 排序推进。
+    RESUME_FILE = os.path.join(os.getcwd(), "clean_resume.txt")
+
+    def _load_resume_point(self) -> str:
+        try:
+            with open(self.RESUME_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+
+    def _save_resume_point(self, symbol: str) -> None:
+        try:
+            with open(self.RESUME_FILE, "w", encoding="utf-8") as f:
+                f.write(symbol)
+        except OSError:
+            pass
+
+    def _clear_resume_point(self) -> None:
+        try:
+            os.remove(self.RESUME_FILE)
+        except OSError:
+            pass
+
+    def clean(self, ss_symbol: str = "", resume: bool = False, force: bool = False, workers: int = 8):
         """
         清洗已入库日线数据：逐只重新抓取主源+验证源，多数决议后与库内数据对比，
-        覆盖度校验通过则删除异常数据并重存决议后数据。
+        覆盖度校验通过则删除异常数据并重存决议后数据。(多线程并发)
         :param ss_symbol: 仅清洗指定股票(如 000001)；为空则清洗全部已入库日线股票
+        :param resume: 断点续跑：跳过 clean_resume.txt 中已确认清洗完成的连续前缀
         :param force: 清洗全部时跳过交互确认(与 --purge 行为一致)
+        :param workers: 并发线程数
         """
         targets = self._all_daily_overviews()
         if not targets:
@@ -386,7 +431,25 @@ class AShareDailyDataManager:
             log.info("没有匹配的日线数据可清洗")
             return
 
-        if not ss_symbol:
+        # 统一按 symbol 排序，保证断点续跑前缀语义(仅当排序前缀全部完成才推进)
+        targets.sort(key=lambda o: (o.symbol, o.exchange.value))
+
+        if resume and not ss_symbol:
+            resume_point = self._load_resume_point()
+            if resume_point:
+                targets = [o for o in targets if o.symbol > resume_point]
+                log.info(f"断点续跑：跳过已清洗完成的股票(<= {resume_point})，剩余 {len(targets)} 只")
+            else:
+                log.info("未找到断点文件，从全部股票开始清洗")
+            # 续跑保留旧断点文件，仅在推进时覆盖更新；不在此处清空
+        else:
+            self._clear_resume_point()
+
+        if not targets:
+            log.info("没有待清洗的日线数据")
+            return
+
+        if not ss_symbol and not resume:
             log.war(f"即将清洗数据库全部日线数据，共 {len(targets)} 只，"
                     f"将逐只重新拉取主源+验证源对比，耗时长且会重写数据库")
             if not force:
@@ -396,52 +459,73 @@ class AShareDailyDataManager:
                     return
 
         log.info(f"开始清洗已入库日线数据，共 {len(targets)} 只")
+
+        def worker(overview: BarOverview) -> bool:
+            symbol = overview.symbol
+            exchange = overview.exchange
+
+            stored = database_manager.load_bar_data(
+                symbol=symbol, exchange=exchange, interval=Interval.DAILY,
+                start=overview.start, end=overview.end)
+            if not stored:
+                return False
+
+            req = HistoryRequest(symbol=symbol, exchange=exchange,
+                                 start=overview.start, end=overview.end,
+                                 interval=Interval.DAILY)
+            fresh, consensus_result = self._query_with_consensus(req)
+            if not fresh:
+                return False
+
+            # 覆盖度守卫：fresh 必须覆盖(几乎)全部库内交易日，防止以残缺数据覆盖完整历史
+            safe, missing, total = check_coverage(
+                [b.datetime.date() for b in stored],
+                [b.datetime.date() for b in fresh])
+            if not safe:
+                log.war(symbol + f" 重新抓取数据缺少 {missing}/{total} 个库内交易日，跳过清洗避免覆盖丢失")
+                return False
+
+            result = compare_bars(stored, fresh, symbol=symbol, exchange=exchange)
+            if result.is_consistent:
+                return False
+
+            deleted = database_manager.delete_bar_data(symbol, exchange, Interval.DAILY)
+            database_manager.save_bar_data(fresh)
+            detail = format_diff(result, "库内", self.source_name)
+            if consensus_result is not None and consensus_result.has_conflict:
+                detail += "\n" + format_consensus(consensus_result, self.source_name, self.verify_sources)
+            log.war(symbol + " 库内数据与多源不一致，已删除" + str(deleted) +
+                    "条并重存\n" + detail)
+            return True
+
         repaired = 0
+        done: set = set()
+        ordered_symbols = [o.symbol for o in targets]
+        prefix_idx = 0
         with tqdm(total=len(targets)) as pbar:
-            for overview in targets:
-                symbol = overview.symbol
-                exchange = overview.exchange
-                pbar.set_description_str("正在清洗股票代码:" + symbol)
-
-                stored = database_manager.load_bar_data(
-                    symbol=symbol, exchange=exchange, interval=Interval.DAILY,
-                    start=overview.start, end=overview.end)
-                if not stored:
+            with ThreadPoolExecutor(max_workers=max(1, int(workers))) as executor:
+                futures = {executor.submit(worker, overview): overview.symbol for overview in targets}
+                for fut in as_completed(futures):
+                    symbol = futures[fut]
+                    success = False
+                    try:
+                        if fut.result():
+                            repaired += 1
+                        success = True
+                    except Exception as ex:
+                        log.error(symbol + " 清洗异常")
+                        log.error(ex)
+                        traceback.print_exc()
+                    pbar.set_description_str("正在清洗股票代码:" + symbol)
                     pbar.update(1)
-                    continue
+                    if success:
+                        done.add(symbol)
+                        while prefix_idx < len(ordered_symbols) and ordered_symbols[prefix_idx] in done:
+                            prefix_idx += 1
+                        if prefix_idx > 0:
+                            self._save_resume_point(ordered_symbols[prefix_idx - 1])
 
-                req = HistoryRequest(symbol=symbol, exchange=exchange,
-                                     start=overview.start, end=overview.end,
-                                     interval=Interval.DAILY)
-                fresh, consensus_result = self._query_with_consensus(req)
-                if not fresh:
-                    pbar.update(1)
-                    continue
-
-                # 覆盖度守卫：fresh 必须覆盖(几乎)全部库内交易日，防止以残缺数据覆盖完整历史
-                safe, missing, total = check_coverage(
-                    [b.datetime.date() for b in stored],
-                    [b.datetime.date() for b in fresh])
-                if not safe:
-                    log.war(symbol + f" 重新抓取数据缺少 {missing}/{total} 个库内交易日，跳过清洗避免覆盖丢失")
-                    pbar.update(1)
-                    continue
-
-                result = compare_bars(stored, fresh, symbol=symbol, exchange=exchange)
-                if result.is_consistent:
-                    pbar.update(1)
-                    continue
-
-                deleted = database_manager.delete_bar_data(symbol, exchange, Interval.DAILY)
-                database_manager.save_bar_data(fresh)
-                repaired += 1
-                detail = format_diff(result, "库内", self.source_name)
-                if consensus_result is not None and consensus_result.has_conflict:
-                    detail += "\n" + format_consensus(consensus_result, self.source_name, self.verify_sources)
-                log.war(symbol + " 库内数据与多源不一致，已删除" + str(deleted) +
-                        "条并重存\n" + detail)
-                pbar.update(1)
-
+        self._clear_resume_point()
         log.info(f"A股股票全市场日线数据清洗完毕，修复 {repaired} 只")
 
     def purge(self, force: bool = False):
@@ -553,11 +637,15 @@ if __name__ == '__main__':
     parser.add_argument("-f", "--force", help="跳过清除/清洗前的交互确认",
                         action="store_true")
     parser.add_argument("-s", "--symbol", type=str, help="从指定的股票代码开始更新/仅清洗该股票")
+    parser.add_argument("-r", "--resume", help="清洗时断点续跑(跳过 clean_resume.txt 中已清洗完成的股票)",
+                        action="store_true")
     parser.add_argument("--source", type=str, default="akshare",
                         choices=["akshare", "baostock", "mootdx", "efinance"],
                         help="选择数据源：akshare/baostock/mootdx/efinance")
     parser.add_argument("--verify-source", type=str, default="",
                         help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；空则自动选与主源不同的单个默认源")
+    parser.add_argument("-w", "--workers", type=int, default=8,
+                        help="并发线程数(下载/更新/清洗)，默认 8")
 
     args = parser.parse_args()
 
@@ -565,6 +653,7 @@ if __name__ == '__main__':
     if not verify_source:
         verify_source = next((s for s in DEFAULT_VERIFY_SOURCES if s != args.source), "")
 
+    workers = max(1, args.workers)
     a_share_daily_data_manager = AShareDailyDataManager(
         source_name=args.source, verify_source=verify_source)
     active_verify = ",".join(a_share_daily_data_manager.verify_sources) or "无"
@@ -573,20 +662,22 @@ if __name__ == '__main__':
         log.info(f"一键清除本地数据库全部K线数据")
         a_share_daily_data_manager.purge(force=args.force)
     elif args.clean:
-        log.info(f"清洗已入库日线数据，数据源={args.source}，验证源={active_verify}")
-        a_share_daily_data_manager.clean(ss_symbol=args.symbol, force=args.force)
+        log.info(f"清洗已入库日线数据，数据源={args.source}，验证源={active_verify}，并发={workers}"
+                 + ("，断点续跑" if args.resume else ""))
+        a_share_daily_data_manager.clean(ss_symbol=args.symbol, resume=args.resume,
+                                         force=args.force, workers=workers)
     elif args.all:
-        log.info(f"下载所有A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}")
-        a_share_daily_data_manager.download_all()
+        log.info(f"下载所有A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}，并发={workers}")
+        a_share_daily_data_manager.download_all(workers=workers)
     elif args.update:
-        log.info(f"自动更新A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}")
-        a_share_daily_data_manager.update_newest(args.symbol)
+        log.info(f"自动更新A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}，并发={workers}")
+        a_share_daily_data_manager.update_newest(args.symbol, workers=workers)
     elif args.check:
         log.info(f"检测并自动更新A股股票全市场日线数据(速度极慢)，数据源={args.source}，验证源={active_verify}")
         a_share_daily_data_manager.check_update_all()
     else:
-        log.info(f"自动更新A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}")
-        a_share_daily_data_manager.update_newest(args.symbol)
+        log.info(f"自动更新A股股票全市场日线数据，数据源={args.source}，验证源={active_verify}，并发={workers}")
+        a_share_daily_data_manager.update_newest(args.symbol, workers=workers)
 
     #a_share_daily_data_manager.download_all()
     #a_share_daily_data_manager.update_newest()
