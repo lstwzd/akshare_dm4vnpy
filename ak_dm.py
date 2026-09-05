@@ -651,10 +651,10 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--symbol", type=str, help="从指定的股票代码开始更新/仅清洗该股票")
     parser.add_argument("-r", "--resume", help="清洗时断点续跑(跳过 clean_resume.txt 中已清洗完成的股票)",
                         action="store_true")
-    parser.add_argument("--source", type=str, default="akshare",
+    parser.add_argument("-o", "--source", type=str, default="akshare",
                         choices=["akshare", "baostock", "mootdx", "efinance", "astock"],
                         help="选择数据源：akshare/baostock/mootdx/efinance/astock")
-    parser.add_argument("--verify-source", type=str, default=None,
+    parser.add_argument("-v", "--verify-source", type=str, default=None,
                         help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；不传则自动选与主源不同的单个默认源；传空串\"\"则关闭验证(仅主源)")
     parser.add_argument("-w", "--workers", type=int, default=8,
                         help="并发线程数(下载/更新/清洗)，默认 8")
