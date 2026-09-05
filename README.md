@@ -45,12 +45,12 @@ python ak_dm.py -c
 
 #### 多数据源与多数决议
 
-支持 5 个数据源: `akshare`(默认) / `baostock` / `mootdx` / `efinance` / `astock`。
+支持 5 个数据源: `astock`(默认) / `akshare` / `baostock` / `mootdx` / `efinance`。
 
-* `-o, --source` 指定主数据源
+* `-o, --source` 指定主数据源(默认 `astock`)
 * `-v, --verify-source` 指定一个或多个验证数据源，支持逗号分隔(如 `baostock,mootdx`)。
-  **默认自动选择**：不指定时，从 `baostock > mootdx > astock > efinance > akshare` 中自动
-  选取第一个与主源不同的数据源(主源为 akshare 时默认验证源为 baostock)。
+  **默认不验证**：不传 `-v` 时仅用主源入库，不做多数决议；传 `-v` 不带值则默认用 `mootdx` 验证；
+  传 `-v baostock` 或 `-v "baostock,mootdx"` 显式指定验证源。
 * `astock` 源基于通达信(mootdx)+腾讯备胎，日线/分钟线均与多源可比对口径一致(不复权、量按股)。
 * 下载/更新/清洗时，主源与全部在场验证源按交易日对齐逐字段做**多数决议**：
   严格多数(>在场源数/2)达成一致的字段取该多数值；主源在多数簇内则用主源值，
@@ -61,10 +61,11 @@ python ak_dm.py -c
 
 示例：
 ```
-python ak_dm.py -u -o akshare                    # 默认自动选验证源(baostock)；-o 为 --source 短别名
-python ak_dm.py -u -v baostock                   # 显式指定单个验证源；-v 为 --verify-source 短别名
-python ak_dm.py -u -v "baostock,mootdx"          # 指定多个验证源做多数决议
-python ak_dm.py -u -v ""                         # 关闭验证(仅主源)
+python ak_dm.py -u -o astock                    # 主源 astock, 默认不验证(仅主源)
+python ak_dm.py -u                              # 同上, -o 可省略(默认主源 astock)
+python ak_dm.py -u -v                           # 主源 astock + 默认验证源 mootdx
+python ak_dm.py -u -v baostock                  # 显式指定单个验证源
+python ak_dm.py -u -v "baostock,mootdx"         # 指定多个验证源做多数决议
 ```
 
 #### 入库数据质量清洗

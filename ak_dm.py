@@ -632,9 +632,6 @@ def run_child(source_name: str = "akshare", verify_source: str = "", ss_symbol: 
 
 if __name__ == '__main__':
 
-    # 默认验证源候选(优先级从高到低)，自动选取第一个与主源不同的数据源
-    DEFAULT_VERIFY_SOURCES: Tuple[str, ...] = ("baostock", "mootdx", "astock", "efinance", "akshare")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", "--all", help="download_all",
                         action="store_true")
@@ -651,19 +648,17 @@ if __name__ == '__main__':
     parser.add_argument("-s", "--symbol", type=str, help="从指定的股票代码开始更新/仅清洗该股票")
     parser.add_argument("-r", "--resume", help="清洗时断点续跑(跳过 clean_resume.txt 中已清洗完成的股票)",
                         action="store_true")
-    parser.add_argument("-o", "--source", type=str, default="akshare",
+    parser.add_argument("-o", "--source", type=str, default="astock",
                         choices=["akshare", "baostock", "mootdx", "efinance", "astock"],
-                        help="选择数据源：akshare/baostock/mootdx/efinance/astock")
-    parser.add_argument("-v", "--verify-source", type=str, default=None,
-                        help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；不传则自动选与主源不同的单个默认源；传空串\"\"则关闭验证(仅主源)")
+                        help="选择数据源：akshare/baostock/mootdx/efinance/astock(默认 astock)")
+    parser.add_argument("-v", "--verify-source", type=str, default="", nargs="?", const="mootdx",
+                        help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；不传则关闭验证(仅主源)；传 -v 不带值则默认用 mootdx 验证")
     parser.add_argument("-w", "--workers", type=int, default=8,
                         help="并发线程数(下载/更新/清洗)，默认 8")
 
     args = parser.parse_args()
 
     verify_source = args.verify_source
-    if verify_source is None:
-        verify_source = next((s for s in DEFAULT_VERIFY_SOURCES if s != args.source), "")
 
     workers = max(1, args.workers)
     a_share_daily_data_manager = AShareDailyDataManager(
