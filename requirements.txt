@@ -1,4 +1,13 @@
+# PyPI 依赖
 akshare
 pandas
+pytz
+tqdm
+mootdx
+requests
 vnpy
 vnpy-datamanager
+
+# 本地模块(不在此安装, 需各自 pip install -e):
+#   vnpy_akshare  子模块 data/vnpy_akshare   -> akshare/baostock/mootdx/efinance 源
+#   vnpy_astock   data/vnpy_astock           -> astock 源(通达信+腾讯备胎)

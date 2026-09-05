@@ -17,6 +17,7 @@ from vnpy.trader.object import HistoryRequest, BarData
 from vnpy.trader.database import BaseDatabase, BarOverview
 
 from vnpy_akshare import get_datafeed
+from vnpy_astock import get_datafeed as get_astock_datafeed
 
 database_manager: BaseDatabase = get_database()
 
@@ -37,11 +38,14 @@ from consensus import (
 
 
 class SourceDataClient:
-    """Adapt vnpy_akshare datafeed to the legacy AKShare script API."""
+    """Adapt vnpy_akshare / vnpy_astock datafeeds to the legacy AKShare script API."""
 
     def __init__(self, source_name: str = "akshare"):
         self.source_name = (source_name or "akshare").lower()
-        self.datafeed = get_datafeed(self.source_name) if self.source_name != "akshare" else akshare_client
+        if self.source_name == "astock":
+            self.datafeed = get_astock_datafeed("astock")
+        else:
+            self.datafeed = get_datafeed(self.source_name) if self.source_name != "akshare" else akshare_client
 
     def init(self, retry: int = 3, retry_interval: int = 10) -> bool:
         if self.source_name == "akshare":
@@ -50,9 +54,17 @@ class SourceDataClient:
             self.trade_cal = self.datafeed.trade_cal
             return ok
 
+        # 数据源自带股票列表/交易日历（astock 走 TDX 直连，不依赖 akshare 东财 HTTP）时优先用自己的
+        if hasattr(type(self.datafeed), "symbols") and hasattr(type(self.datafeed), "trade_cal"):
+            if not self.datafeed.init(output=lambda *args, **kwargs: None):
+                return False
+            self.symbols = self.datafeed.symbols
+            self.trade_cal = self.datafeed.trade_cal
+            return True
+
+        # 其余源（baostock/mootdx/efinance）无自带列表/日历，沿用 akshare 拉取（原逻辑不变）
         if not akshare_client.init(retry=retry, retry_interval=retry_interval):
             return False
-
         self.symbols = akshare_client.symbols
         self.trade_cal = akshare_client.trade_cal
         return True
@@ -621,7 +633,7 @@ def run_child(source_name: str = "akshare", verify_source: str = "", ss_symbol: 
 if __name__ == '__main__':
 
     # 默认验证源候选(优先级从高到低)，自动选取第一个与主源不同的数据源
-    DEFAULT_VERIFY_SOURCES: Tuple[str, ...] = ("baostock", "mootdx", "efinance", "akshare")
+    DEFAULT_VERIFY_SOURCES: Tuple[str, ...] = ("baostock", "mootdx", "astock", "efinance", "akshare")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-a", "--all", help="download_all",
@@ -640,17 +652,17 @@ if __name__ == '__main__':
     parser.add_argument("-r", "--resume", help="清洗时断点续跑(跳过 clean_resume.txt 中已清洗完成的股票)",
                         action="store_true")
     parser.add_argument("--source", type=str, default="akshare",
-                        choices=["akshare", "baostock", "mootdx", "efinance"],
-                        help="选择数据源：akshare/baostock/mootdx/efinance")
-    parser.add_argument("--verify-source", type=str, default="",
-                        help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；空则自动选与主源不同的单个默认源")
+                        choices=["akshare", "baostock", "mootdx", "efinance", "astock"],
+                        help="选择数据源：akshare/baostock/mootdx/efinance/astock")
+    parser.add_argument("--verify-source", type=str, default=None,
+                        help="交叉验证数据源，支持逗号分隔多个(如 baostock,mootdx)；不传则自动选与主源不同的单个默认源；传空串\"\"则关闭验证(仅主源)")
     parser.add_argument("-w", "--workers", type=int, default=8,
                         help="并发线程数(下载/更新/清洗)，默认 8")
 
     args = parser.parse_args()
 
     verify_source = args.verify_source
-    if not verify_source:
+    if verify_source is None:
         verify_source = next((s for s in DEFAULT_VERIFY_SOURCES if s != args.source), "")
 
     workers = max(1, args.workers)

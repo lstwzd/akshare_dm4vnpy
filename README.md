@@ -1,24 +1,34 @@
-# akshare_dm4vnpy
+# dd2vnpy
 
 #### 介绍
-基于akshare同步A股历史数据到本地数据库
+多数据源同步A股历史数据到本地数据库(akshare / baostock / mootdx / efinance / astock)。
 
 #### 软件架构
-* vnpy + akshare
+* vnpy + 多数据源(akshare/baostock/mootdx/efinance/astock)
 
 #### 安装教程
 1. 确保vnpy环境已正常安装
-2.  pip install -r requirements.txt
+2. 安装依赖:
+   ```
+   pip install -r requirements.txt
+   ```
+3. 安装本地数据源模块(源码目录, 非 PyPI):
+   ```
+   cd data/vnpy_akshare && pip install -e .     # akshare/baostock/mootdx/efinance 源
+   cd data/vnpy_astock && pip install -e .      # astock 源(通达信+腾讯备胎)
+   ```
 
 #### 使用说明
 
 1. 配置好vnpy本地数据库
-   * 在vnpy交易软件，配置->全局配置，例如mongodb数据库
+   * 默认使用 vnpy 本地数据库(SQLite),无需额外配置即可入库
+   * 如需使用 mongodb,在 vnpy 全局配置中设置:
    ```
    database.name  mongodb
-   ...
+   database.host  localhost
+   database.port  27017
    ```
-   * 在mongodb中新建 vnpy_tushare 数据库
+   * 并确保对应 mongodb 数据库服务已启动
 
 
 2.  下载所有A股股票全市场日线数据(linux/macos)
@@ -35,12 +45,13 @@ python ak_dm.py -c
 
 #### 多数据源与多数决议
 
-支持 4 个数据源: `akshare`(默认) / `baostock` / `mootdx` / `efinance`。
+支持 5 个数据源: `akshare`(默认) / `baostock` / `mootdx` / `efinance` / `astock`。
 
 * `--source` 指定主数据源
 * `--verify-source` 指定一个或多个验证数据源，支持逗号分隔(如 `baostock,mootdx`)。
-  **默认自动选择**：不指定时，从 `baostock > mootdx > efinance > akshare` 中自动
+  **默认自动选择**：不指定时，从 `baostock > mootdx > astock > efinance > akshare` 中自动
   选取第一个与主源不同的数据源(主源为 akshare 时默认验证源为 baostock)。
+* `astock` 源基于通达信(mootdx)+腾讯备胎，日线/分钟线均与多源可比对口径一致(不复权、量按股)。
 * 下载/更新/清洗时，主源与全部在场验证源按交易日对齐逐字段做**多数决议**：
   严格多数(>在场源数/2)达成一致的字段取该多数值；主源在多数簇内则用主源值，
   主源被多数否决时用多数簇中位数覆盖并记录冲突；无法形成多数时回退主源并标记。
